@@ -61,9 +61,14 @@ def run_inference(image_path, model, quiet=False):
 
     I = image.astype(np.float32) / 255.0
     
+    # NOTE: The distilled student model in distil_q was trained on transposed (rotated/mirrored) data.
+    # When feeding a standard real-world upright user-supplied image, we MUST apply transposition 
+    # (swapping rows/columns) before inference to align with the model's trained weight orientation.
+    I_transposed = np.transpose(I)
+    
     model.eval()
     with torch.no_grad():
-        x_tensor = torch.tensor(I).unsqueeze(0).unsqueeze(0)
+        x_tensor = torch.tensor(I_transposed).unsqueeze(0).unsqueeze(0)
         out = model(x_tensor)
         predicted_digit = torch.argmax(out).item()
 
