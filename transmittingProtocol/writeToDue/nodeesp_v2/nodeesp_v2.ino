@@ -222,12 +222,35 @@ void processAndSendToDue() {
     lastWasInk=buf[i].ink;
   }
 
-  // === 壓縮 784 bits 成 98 bytes ===
+  // === 加粗 (Thicken) ===
+  uint8_t thick_grid[28][28];
+  for (int y = 0; y < 28; y++) {
+    for (int x = 0; x < 28; x++) {
+      thick_grid[y][x] = 255;
+    }
+  }
+  for (int y = 0; y < 28; y++) {
+    for (int x = 0; x < 28; x++) {
+      if (grid[y][x] == 0) {
+        // 3x3 矩陣加粗
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            int ny = y + dy, nx = x + dx;
+            if (ny >= 0 && ny < 28 && nx >= 0 && nx < 28) {
+              thick_grid[ny][nx] = 0;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // === 壓縮 784 bits 成 98 bytes (維持正向) ===
   memset(raw_msg, 0, msglen);
   for (int y = 0; y < 28; y++) {
     for (int x = 0; x < 28; x++) {
       int bitIndex = y * 28 + x;
-      if (grid[y][x] == 0) { // 若為實心墨水點
+      if (thick_grid[y][x] == 0) { // 若為實心墨水點
         raw_msg[bitIndex / 8] |= (1 << (7 - (bitIndex % 8)));
       }
     }
