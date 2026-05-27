@@ -1,0 +1,12 @@
+# EMNIST dataset large files
+*.npz
+emnist_28x28.npz
+
+# Python environment / cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Arduino build artifacts
+build/
