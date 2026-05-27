@@ -11,6 +11,7 @@ uint32_t startTimeUs = 0;
 unsigned long totalPackets = 0;
 unsigned long corruptPackets = 0;
 
+// --- YOUR ORIGINAL DMA STRUCT ---
 typedef struct {
   __IO uint32_t PERIPH_RPR;       
   __IO uint32_t PERIPH_RCR;       
@@ -24,6 +25,7 @@ typedef struct {
   __I  uint32_t PERIPH_PTSR;      
 } PdcChannel;
 
+// Map it to the exact memory offset for SPI0 DMA
 volatile PdcChannel *spiDma = (volatile PdcChannel *)((uint32_t)SPI0 + 0x100);
 
 #define Bit_SPI_SR_ENDRX   (1 << 3)
@@ -31,20 +33,18 @@ volatile PdcChannel *spiDma = (volatile PdcChannel *)((uint32_t)SPI0 + 0x100);
 #define Bit_PTCR_RXTEN     (1 << 0)
 #define Bit_PTCR_RXTDIS    (1 << 1)
 
-// --- HARDWARE FLUSH FUNCTION ---
 void flushSPIHardware() {
-  // Disable DMA receiver temporarily
+  // Disable DMA
   spiDma->PERIPH_PTCR = Bit_PTCR_RXTDIS;
   
-  // Read the status register to reset hardware interrupt flags
-  uint32_t dummyStatus = SPI0->SPI_SR;
+  // Clear Overrun flags by reading Status Register
+  volatile uint32_t dummyStatus = SPI0->SPI_SR;
   
-  // Read the receive data register until it's empty (RDRF flag clears)
+  // Clear the shift register
   while (SPI0->SPI_SR & Bit_SPI_SR_RDRF) {
-    uint32_t dummyRead = SPI0->SPI_RDR;
+    volatile uint32_t dummyRead = SPI0->SPI_RDR;
   }
   
-  // Clear any pending interrupts in the NVIC for SPI0
   NVIC_ClearPendingIRQ(SPI0_IRQn);
 }
 
@@ -59,23 +59,39 @@ void setup() {
   PIO_Configure(PIOA, PIO_PERIPH_A, PIO_PA25 | PIO_PA26 | PIO_PA27 | PIO_PA28, PIO_DEFAULT);
 
   SPI0->SPI_CR = SPI_CR_SPIDIS;         
-  SPI0->SPI_MR = 0;                     
-  SPI0->SPI_CSR[0] = 0; // Mode 1 
+  while ((SPI0->SPI_SR & SPI_SR_SPIENS)); 
 
-  // Setup initial DMA target
-  spiDma->PERIPH_RPR = (uint32_t)dmaBuffer; 
-  spiDma->PERIPH_RCR = BUFFER_SIZE;         
+  SPI0->SPI_WPMR = 0x53504900; 
+
+  // Atmel Errata: Double SWRST ensures deep logic resets
+  SPI0->SPI_CR = SPI_CR_SWRST;
+  SPI0->SPI_CR = SPI_CR_SWRST;
+  delay(10); 
+
+  // FIX: Disable Mode Fault and correct the Phase Logic (NCPHA)
+  SPI0->SPI_MR = SPI_MR_MODFDIS;                     
+  SPI0->SPI_CSR[0] = SPI_CSR_NCPHA | SPI_CSR_BITS_8_BIT;       
   
   SPI0->SPI_IER = Bit_SPI_SR_ENDRX;       
   NVIC_EnableIRQ(SPI0_IRQn);            
-  SPI0->SPI_CR = SPI_CR_SPIEN;          
+  SPI0->SPI_CR = SPI_CR_SPIEN;    
+  delay(10);
+  Serial.print("SPI_MR = 0x"); Serial.println(SPI0->SPI_MR, HEX);
+  Serial.print("SPI_SR = 0x"); Serial.println(SPI0->SPI_SR, HEX);
+  Serial.print("SPI_CSR0 = 0x"); Serial.println(SPI0->SPI_CSR[0], HEX);
+  Serial.print("DMA RPR = 0x"); Serial.println(spiDma->PERIPH_RPR, HEX);
+  Serial.print("DMA RCR = "); Serial.println(spiDma->PERIPH_RCR);      
 
   Serial.println("Due Benchmark Ready. Waiting to trigger...");
   delay(1000);
 
-  // Initial trigger with a clean flush
   flushSPIHardware();
+  
+  // Arm the DMA using your struct
+  spiDma->PERIPH_RPR = (uint32_t)dmaBuffer; 
+  spiDma->PERIPH_RCR = BUFFER_SIZE;         
   spiDma->PERIPH_PTCR = Bit_PTCR_RXTEN;
+  
   startTimeUs = micros();
   digitalWrite(READY_PIN, HIGH); 
 }
@@ -85,7 +101,7 @@ void SPI0_Handler() {
 
   if (status & Bit_SPI_SR_ENDRX) {
     burstDurationUs = micros() - startTimeUs;
-    digitalWrite(READY_PIN, LOW); // Instantly halt the ESP32
+    digitalWrite(READY_PIN, LOW); 
     packetReceived = true;
   }
 }
@@ -96,9 +112,8 @@ void loop() {
     bool isCorrupt = false;
     int firstBadIndex = -1;
 
-    // 1. Data Integrity check
     for (int i = 0; i < BUFFER_SIZE; i++) {
-      uint8_t expected = (uint8_t)((i % 255) + 1); // Expects 1, 2, 3...
+      uint8_t expected = (uint8_t)((i % 255) + 1); 
       if (dmaBuffer[i] != expected) {
         isCorrupt = true;
         firstBadIndex = i;
@@ -108,7 +123,6 @@ void loop() {
 
     if (isCorrupt) corruptPackets++;
 
-    // 2. Print metrics and debug block
     float megabitsPerSecond = (float)(BUFFER_SIZE * 8) / burstDurationUs;
     
     Serial.print("Packet #"); Serial.print(totalPackets);
@@ -123,7 +137,6 @@ void loop() {
       Serial.println("INDEX\t| EXPECTED (HEX)\t| ACTUAL (HEX)\t| ACTUAL (BINARY)");
       Serial.println("-----------------------------------------------------------------");
       
-      // Print the surrounding 16 bytes for context
       int startPrint = (firstBadIndex - 4 < 0) ? 0 : firstBadIndex - 4;
       for (int g = startPrint; g < startPrint + 16 && g < BUFFER_SIZE; g++) {
         uint8_t exp = (uint8_t)((g % 255) + 1);
@@ -145,16 +158,14 @@ void loop() {
       Serial.println(" | Status: ✅ PERFECT");
     }
 
-    // 3. Reset and prepare for next packet (if perfect)
     delay(1000); 
 
     packetReceived = false;
     memset(dmaBuffer, 0, BUFFER_SIZE);
     
-    // Purge any hidden hardware bytes before opening the gate
     flushSPIHardware(); 
 
-    // Re-arm DMA registers
+    // Rearm DMA
     spiDma->PERIPH_RPR = (uint32_t)dmaBuffer;
     spiDma->PERIPH_RCR = BUFFER_SIZE;
     spiDma->PERIPH_PTCR = Bit_PTCR_RXTEN; 
