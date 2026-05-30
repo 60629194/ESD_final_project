@@ -1,4 +1,4 @@
-#include "../RS_FEC.h" // Switched to quotes to match your tab structure
+#include "RS_FEC.h" // Switched to quotes to match your tab structure
 #include "soc/gpio_reg.h"
 
 const int pins[8] = {16, 17, 18, 19, 21, 22, 23, 25};

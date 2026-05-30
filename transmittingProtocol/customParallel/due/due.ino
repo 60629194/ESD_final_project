@@ -1,4 +1,4 @@
-#include "../RS_FEC.h"
+#include "RS_FEC.h"
 
 const int CLOCK_PIN = 2;
 volatile uint8_t receivedData = 0;
