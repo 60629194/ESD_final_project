@@ -353,6 +353,13 @@ void printGrid(uint8_t* data) {
 }
 
 void loop() {
+  if (Serial.available() > 0) {
+    char c = Serial.read();
+    if (c == 'P') {
+      Serial.println("ARDUINO_DUE_HANDSHAKE");
+    }
+  }
+
   if (newData) {
     newData = false;
     if (!isTimingBurst) {
